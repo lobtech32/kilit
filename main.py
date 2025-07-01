@@ -8,12 +8,22 @@ PORT = 40341
 IMEI = "862205059210023"
 USER_ID = 1234
 
-def build_lock_command():
-    time_str = datetime.utcnow().strftime('%y%m%d%H%M%S')
+def make_cmd(command: str):
+    now = datetime.utcnow().strftime('%y%m%d%H%M%S')
+    return f"*CMDS,OM,{IMEI},{now},{command}#\n".encode("utf-8")
+
+def build_l0():
     timestamp = int(time.time())
-    cycle_minutes = 1  # sade tutuldu
-    cmd = f"*CMDS,OM,{IMEI},{time_str},L1,{USER_ID},{timestamp},{cycle_minutes}#\n"
-    return b'\xFF\xFF' + cmd.encode('utf-8')
+    return make_cmd(f"L0,0,{USER_ID},{timestamp}")
+
+def build_s5():
+    return make_cmd("S5")
+
+def build_g0():
+    return make_cmd("G0")
+
+def build_d0():
+    return make_cmd("D0")
 
 def handle_client(conn, addr):
     print(f"[+] Bağlantı kuruldu: {addr}")
@@ -25,14 +35,27 @@ def handle_client(conn, addr):
                 break
             buffer += data
             try:
-                message = buffer.decode("utf-8")
-                print(f"[📩] Gelen veri: {message.strip()}")
-                if "*CMDR" in message and IMEI in message:
-                    print("🟢 Kilit bağlandı. 15 saniye sonra kilitlenecek...")
-                    time.sleep(15)
-                    lock_cmd = build_lock_command()
-                    conn.sendall(lock_cmd)
-                    print(f"[🔒] Kilitleme komutu gönderildi:\n{lock_cmd.decode(errors='ignore')}")
+                msg = buffer.decode("utf-8")
+                print(f"[📩] Gelen veri:\n{msg.strip()}")
+                if "*CMDR" in msg and IMEI in msg:
+                    print("🟢 Kilit bağlandı. Komutlar sırayla gönderiliyor...\n")
+
+                    time.sleep(1)
+                    conn.sendall(b'\xFF\xFF' + build_l0())
+                    print("➡️ L0 gönderildi (kilit aç)\n")
+                    time.sleep(1)
+
+                    conn.sendall(b'\xFF\xFF' + build_s5())
+                    print("➡️ S5 gönderildi (durum bilgisi)\n")
+                    time.sleep(1)
+
+                    conn.sendall(b'\xFF\xFF' + build_g0())
+                    print("➡️ G0 gönderildi (firmware bilgisi)\n")
+                    time.sleep(1)
+
+                    conn.sendall(b'\xFF\xFF' + build_d0())
+                    print("➡️ D0 gönderildi (konum isteği)\n")
+
                 buffer = b""
             except UnicodeDecodeError:
                 continue
@@ -42,13 +65,13 @@ def handle_client(conn, addr):
     conn.close()
 
 def start_server():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_socket.bind((HOST, PORT))
-        server_socket.listen()
-        print(f"[🚀] Sunucu dinliyor: {HOST}:{PORT}")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((HOST, PORT))
+        s.listen()
+        print(f"[🚀] Sunucu çalışıyor: {HOST}:{PORT}")
         while True:
-            conn, addr = server_socket.accept()
+            conn, addr = s.accept()
             handle_client(conn, addr)
 
 if __name__ == "__main__":
