@@ -4,7 +4,6 @@ import time
 
 HOST = '0.0.0.0'
 PORT = 40341
-
 IMEI = "862205059210023"
 
 def get_time_str():
@@ -12,21 +11,20 @@ def get_time_str():
 
 def build_position_request():
     ts = get_time_str()
-    cmd_str = f"*CMDS,OM,{IMEI},{ts},D0#\n"
-    full_cmd = b'\xFF\xFF' + cmd_str.encode('utf-8')
-    return full_cmd, cmd_str  # hem ham veri hem okunabilir hali
+    readable = f"*CMDS,OM,{IMEI},{ts},D0#\n"
+    raw = b'\xFF\xFF' + readable.encode('utf-8')
+    return raw, readable
 
 def handle_client(conn, addr):
     print(f"[+] Yeni bağlantı: {addr}")
     
-    # D0 komutunu hazırla
-    req_bytes, req_str = build_position_request()
-    
+    # konum komutu hazırla ve gönder
+    raw_cmd, readable_cmd = build_position_request()
     try:
-        conn.sendall(req_bytes)
-        print(f"[➡️] Konum isteği gönderildi:\n{req_str.strip()}")
+        conn.sendall(raw_cmd)
+        print(f"[➡️] Konum isteği gönderildi:\n{readable_cmd.strip()}")
     except Exception as e:
-        print(f"[HATA] Konum isteği gönderilemedi: {e}")
+        print(f"[HATA] Komut gönderilemedi: {e}")
         conn.close()
         return
 
@@ -38,8 +36,8 @@ def handle_client(conn, addr):
                 break
             buffer += data
             try:
-                message = buffer.decode("utf-8", errors="ignore").strip()
-                print(f"[📩] Gelen veri: {message}")
+                decoded = buffer.decode('utf-8', errors='ignore').strip()
+                print(f"[📩] Gelen veri: {decoded}")
                 buffer = b""
             except Exception as e:
                 print(f"[❗] Decode hatası: {e}")
@@ -51,7 +49,7 @@ def handle_client(conn, addr):
         print(f"[-] Bağlantı kapandı: {addr}")
 
 def start_server():
-    with socket.socket(socket.SOCK_STREAM) as s:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
