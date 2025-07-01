@@ -8,16 +8,11 @@ PORT = 40341
 IMEI = "862205059210023"
 USER_ID = 1234
 
-def build_unlock_command():
+def build_lock_command():
     time_str = datetime.utcnow().strftime('%y%m%d%H%M%S')
     timestamp = int(time.time())
-    cmd = f"*CMDS,OM,{IMEI},{time_str},L0,0,{USER_ID},{timestamp}#\n"
-    return b'\xFF\xFF' + cmd.encode('utf-8'), timestamp
-
-def build_lock_command(unlock_timestamp):
-    time_str = datetime.utcnow().strftime('%y%m%d%H%M%S')
-    cycle_minutes = 3  # örnek: kullanım süresi
-    cmd = f"*CMDS,OM,{IMEI},{time_str},L1,{USER_ID},{unlock_timestamp},{cycle_minutes}#\n"
+    cycle_minutes = 3
+    cmd = f"*CMDS,OM,{IMEI},{time_str},L1,{USER_ID},{timestamp},{cycle_minutes}#\n"
     return b'\xFF\xFF' + cmd.encode('utf-8')
 
 def handle_client(conn, addr):
@@ -33,15 +28,9 @@ def handle_client(conn, addr):
                 message = buffer.decode("utf-8")
                 print(f"[📩] Gelen veri: {message.strip()}")
                 if "*CMDR" in message and IMEI in message:
-                    print("🔓 Kilit bağlandı. Açma komutu gönderiliyor...")
-                    unlock_cmd, ts = build_unlock_command()
-                    conn.sendall(unlock_cmd)
-                    print(f"[➡️] Açma komutu gönderildi:\n{unlock_cmd.decode(errors='ignore')}")
-
-                    print("⏳ 15 saniye bekleniyor...")
+                    print("🟢 Kilit bağlandı. 15 saniye sonra kapatılacak...")
                     time.sleep(15)
-
-                    lock_cmd = build_lock_command(ts)
+                    lock_cmd = build_lock_command()
                     conn.sendall(lock_cmd)
                     print(f"[🔒] Kapatma komutu gönderildi:\n{lock_cmd.decode(errors='ignore')}")
                 buffer = b""
