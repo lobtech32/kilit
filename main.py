@@ -6,41 +6,75 @@ HOST = '0.0.0.0'
 PORT = 40341
 IMEI = "862205059210023"
 
-def get_time_str():
-    return datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')
+def build_d0_command():
+    ts = datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')
+    cmd_str = f"*CMDS,OM,{IMEI},{ts},D0#\n"
+    full_cmd = b'\xFF\xFF' + cmd_str.encode('utf-8')
+    return full_cmd, cmd_str
 
-def build_position_request():
-    ts = get_time_str()
-    readable = f"*CMDS,OM,{IMEI},{ts},D0#\n"
-    raw = b'\xFF\xFF' + readable.encode('utf-8')
-    return raw, readable
+def parse_location_response(message):
+    if ",D0," not in message:
+        return None
+    parts = message.split(',')
+    if len(parts) < 13:
+        return None
+    try:
+        lat_raw = parts[7]
+        lat_dir = parts[8]
+        lon_raw = parts[9]
+        lon_dir = parts[10]
+        if not lat_raw or not lon_raw or lat_dir not in ('N', 'S') or lon_dir not in ('E', 'W'):
+            return None
+
+        lat_deg = int(float(lat_raw) / 100)
+        lat_min = float(lat_raw) - lat_deg * 100
+        lat = lat_deg + (lat_min / 60.0)
+        if lat_dir == 'S':
+            lat = -lat
+
+        lon_deg = int(float(lon_raw) / 100)
+        lon_min = float(lon_raw) - lon_deg * 100
+        lon = lon_deg + (lon_min / 60.0)
+        if lon_dir == 'W':
+            lon = -lon
+
+        return lat, lon
+    except Exception:
+        return None
 
 def handle_client(conn, addr):
     print(f"[+] Yeni bağlantı: {addr}")
-    
-    # konum komutu hazırla ve gönder
-    raw_cmd, readable_cmd = build_position_request()
     try:
+        raw_cmd, readable_cmd = build_d0_command()
         conn.sendall(raw_cmd)
-        print(f"[➡️] Konum isteği gönderildi:\n{readable_cmd.strip()}")
+        print(f"[➡️] D0 komutu gönderildi:\n{readable_cmd.strip()}")
     except Exception as e:
         print(f"[HATA] Komut gönderilemedi: {e}")
         conn.close()
         return
 
     buffer = b""
+    timeout = time.time() + 180  # 3 dakikalık timeout
     try:
-        while True:
-            data = conn.recv(1024)
-            if not data:
-                break
-            buffer += data
+        while time.time() < timeout:
+            conn.settimeout(5)
             try:
-                decoded = buffer.decode('utf-8', errors='ignore').strip()
-                print(f"[📩] Gelen veri: {decoded}")
-                buffer = b""
-            except Exception as e:
-                print(f"[❗] Decode hatası: {e}")
+                data = conn.recv(1024)
+                if not data:
+                    break
+                buffer += data
+                try:
+                    decoded = buffer.decode('utf-8', errors='ignore').strip()
+                    print(f"[📩] Gelen veri: {decoded}")
+                    loc = parse_location_response(decoded)
+                    if loc:
+                        print(f"📍 Konum alındı: Enlem={loc[0]:.6f}, Boylam={loc[1]:.6f}")
+                        break
+                    buffer = b""
+                except Exception as e:
+                    print(f"[❗] Decode hatası: {e}")
+                    continue
+            except socket.timeout:
                 continue
     except ConnectionResetError:
         print("[-] Bağlantı sıfırlandı.")
