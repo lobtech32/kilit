@@ -11,12 +11,12 @@ USER_ID = 1234
 def build_lock_command():
     time_str = datetime.utcnow().strftime('%y%m%d%H%M%S')
     timestamp = int(time.time())
-    cycle_minutes = 3
+    cycle_minutes = 1  # sade tutuldu
     cmd = f"*CMDS,OM,{IMEI},{time_str},L1,{USER_ID},{timestamp},{cycle_minutes}#\n"
     return b'\xFF\xFF' + cmd.encode('utf-8')
 
 def handle_client(conn, addr):
-    print(f"[+] Yeni bağlantı: {addr}")
+    print(f"[+] Bağlantı kuruldu: {addr}")
     buffer = b""
     while True:
         try:
@@ -28,11 +28,11 @@ def handle_client(conn, addr):
                 message = buffer.decode("utf-8")
                 print(f"[📩] Gelen veri: {message.strip()}")
                 if "*CMDR" in message and IMEI in message:
-                    print("🟢 Kilit bağlandı. 15 saniye sonra kapatılacak...")
+                    print("🟢 Kilit bağlandı. 15 saniye sonra kilitlenecek...")
                     time.sleep(15)
                     lock_cmd = build_lock_command()
                     conn.sendall(lock_cmd)
-                    print(f"[🔒] Kapatma komutu gönderildi:\n{lock_cmd.decode(errors='ignore')}")
+                    print(f"[🔒] Kilitleme komutu gönderildi:\n{lock_cmd.decode(errors='ignore')}")
                 buffer = b""
             except UnicodeDecodeError:
                 continue
@@ -46,7 +46,7 @@ def start_server():
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((HOST, PORT))
         server_socket.listen()
-        print(f"[🚀] Sunucu başlatıldı: {HOST}:{PORT}")
+        print(f"[🚀] Sunucu dinliyor: {HOST}:{PORT}")
         while True:
             conn, addr = server_socket.accept()
             handle_client(conn, addr)
