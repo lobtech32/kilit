@@ -1,61 +1,51 @@
 import socket
-import time
 import datetime
 import threading
+import time
+import zlib
 
 HOST = '0.0.0.0'
 PORT = 40341
 IMEI = '862205059210023'
 
-def crc_xor(hex_str):
-    xor_result = 0
-    for i in range(0, len(hex_str), 2):
-        xor_result ^= int(hex_str[i:i+2], 16)
-    return '{:02X}'.format(xor_result)
+def crc16(data):
+    crc = zlib.crc32(data.encode()) & 0xFF
+    return f"{crc:02X}"
 
-def build_command(cmd_code):
-    now = datetime.datetime.utcnow()
-    timestamp = now.strftime('%d%m%y%H%M%S')
-    raw = f'*CMDS,OM,{IMEI},{timestamp},{cmd_code}#'
-    hex_data = raw.encode().hex().upper()
-    crc = crc_xor(hex_data)
-    return raw.encode() + crc.encode()
+def gps_request():
+    now = datetime.datetime.utcnow().strftime('%d%m%y%H%M%S')
+    raw = f"*CMDS,OM,{IMEI},{now},D0,1"
+    packet = f"{raw}#{crc16(raw)}"
+    return packet.encode()
 
 def handle_client(conn, addr):
     print(f"[+] Yeni bağlantı: {addr}")
-    request = build_command("D0,1")  # Sadece konum isteği
-    conn.sendall(request)
-    print(f"[➡️] D0 komutu gönderildi:\n{request.decode(errors='ignore')}")
-
-    last_location = time.time()
-
     try:
         while True:
-            data = conn.recv(1024)
-            if not data:
-                break
-            try:
-                message = data.decode('utf-8')
-            except UnicodeDecodeError:
-                print("⚠️ Gelen veri çözülemedi (UTF-8 dışı karakter)")
-                continue
+            conn.sendall(gps_request())
+            print(f"[➡️] D0 komutu gönderildi:")
 
-            print(f"[📩] Gelen veri: {message.strip()}")
-            if "*CMDR" in message and ",L1," in message:
-                print("📍 Konum verisi alındı, 10 dakika sonra tekrar istenecek.")
-                last_location = time.time()
-            elif "*CMDR" in message and ",L0," in message:
-                print("❌ Konum alınamadı. Tekrar deneniyor...")
+            timeout = time.time() + 15  # 15 saniye içinde cevap bekle
 
-            if time.time() - last_location >= 600:
-                request = build_command("D0,1")
-                conn.sendall(request)
-                print(f"[📤] Yeniden konum istendi:\n{request.decode(errors='ignore')}")
-                last_location = time.time()
+            while time.time() < timeout:
+                try:
+                    data = conn.recv(1024)
+                    if not data:
+                        break
+                    msg = data.decode(errors='ignore').strip()
+                    print(f"[📩] Gelen veri: {msg}")
 
-            time.sleep(2)
+                    if ",L1," in msg:
+                        print("📍 Konum verisi geldi (içerik kontrol edilmeli).")
+                        break
+                except Exception as e:
+                    print(f"[!] Veri okuma hatası: {e}")
+                    break
+
+            print("🕓 10 dakika bekleniyor...\n")
+            time.sleep(600)  # 10 dakika bekle
     except Exception as e:
-        print(f"[HATA] {e}")
+        print(f"[!] Hata: {e}")
     finally:
         conn.close()
         print(f"[-] Bağlantı kapandı: {addr}")
@@ -67,8 +57,7 @@ def start_server():
         print(f"[🚀] Sunucu çalışıyor: {HOST}:{PORT}")
         while True:
             conn, addr = s.accept()
-            thread = threading.Thread(target=handle_client, args=(conn, addr))
-            thread.start()
+            threading.Thread(target=handle_client, args=(conn, addr)).start()
 
 if __name__ == "__main__":
     start_server()
