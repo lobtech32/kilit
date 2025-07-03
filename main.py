@@ -3,58 +3,70 @@ import datetime
 import threading
 import time
 import zlib
+import logging
+
+# Log ayarları
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 HOST = '0.0.0.0'
 PORT = 40341
 IMEI = '862205059210023'
+GPS_TIMEOUT = 180  # 3 dakika (GPS fix süresi)
 
 def crc16(data):
-    crc = zlib.crc32(data.encode()) & 0xFF
-    return f"{crc:02X}"
+    crc = zlib.crc32(data.encode()) & 0xFFFF
+    return f"{crc:04X}"
 
-def gps_request():
-    now = datetime.datetime.utcnow().strftime('%d%m%y%H%M%S')
-    raw = f"*CMDS,OM,{IMEI},{now},D0,1"
-    packet = f"{raw}#{crc16(raw)}"
-    return packet.encode()
+def build_command(command_type):
+    now = datetime.datetime.now(datetime.timezone.utc).strftime('%d%m%y%H%M%S')
+    raw = f"*CMDS,OM,{IMEI},{now},{command_type}"
+    return f"{raw}#{crc16(raw)}".encode()
 
 def handle_client(conn, addr):
-    print(f"[+] Yeni bağlantı: {addr}")
+    logging.info(f"[+] Yeni bağlantı: {addr}")
     try:
+        # İlk GPS isteği
+        conn.sendall(build_command("D0"))
+        logging.info("[➡️] D0 komutu gönderildi (ilk istek)")
+
         while True:
-            conn.sendall(gps_request())
-            print(f"[➡️] D0 komutu gönderildi:")
+            data = conn.recv(1024)
+            if not data:
+                break
 
-            timeout = time.time() + 15  # 15 saniye içinde cevap bekle
+            msg = data.decode(errors='ignore').strip()
+            logging.info(f"[📩] Gelen veri: {msg}")
 
-            while time.time() < timeout:
-                try:
-                    data = conn.recv(1024)
-                    if not data:
-                        break
-                    msg = data.decode(errors='ignore').strip()
-                    print(f"[📩] Gelen veri: {msg}")
+            if "*CMDR" in msg and IMEI in msg:
+                if ",D0," in msg:
+                    if "A,," not in msg:  # Geçerli GPS verisi kontrolü
+                        logging.warning("GPS verisi geçersiz veya yok!")
+                        time.sleep(GPS_TIMEOUT)  # Yeni deneme öncesi bekle
+                    else:
+                        logging.info("✅ Geçerli GPS verisi alındı!")
+                        time.sleep(600)  # 10 dakika bekle
 
-                    if ",L1," in msg:
-                        print("📍 Konum verisi geldi (içerik kontrol edilmeli).")
-                        break
-                except Exception as e:
-                    print(f"[!] Veri okuma hatası: {e}")
-                    break
+                elif ",L1," in msg:
+                    logging.info("🔒 Kilit kapatıldı, GPS isteği gönderiliyor...")
+                    time.sleep(2)  # Kısa bekleme
+                    conn.sendall(build_command("D0"))
 
-            print("🕓 10 dakika bekleniyor...\n")
-            time.sleep(600)  # 10 dakika bekle
     except Exception as e:
-        print(f"[!] Hata: {e}")
+        logging.error(f"[!] Hata: {e}")
     finally:
         conn.close()
-        print(f"[-] Bağlantı kapandı: {addr}")
+        logging.info(f"[-] Bağlantı kapandı: {addr}")
 
 def start_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
-        print(f"[🚀] Sunucu çalışıyor: {HOST}:{PORT}")
+        logging.info(f"[🚀] Sunucu çalışıyor: {HOST}:{PORT}")
         while True:
             conn, addr = s.accept()
             threading.Thread(target=handle_client, args=(conn, addr)).start()
