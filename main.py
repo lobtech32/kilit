@@ -8,27 +8,27 @@ HOST = '0.0.0.0'
 PORT = 40341
 IMEI = '862205059210023'
 
-def crc16(data):
+def crc8(data):  # D0 komutları için genelde 1 byte CRC yeterlidir
     crc = zlib.crc32(data.encode()) & 0xFF
     return f"{crc:02X}"
 
-def gps_request():
+def create_d0_packet():
     now = datetime.datetime.utcnow().strftime('%d%m%y%H%M%S')
-    raw = f"*CMDS,OM,{IMEI},{now},D1,1"  # D0 yerine D1 komutu
-    packet = f"{raw}#{crc16(raw)}"
+    raw = f"*CMDS,OM,{IMEI},{now},D0"
+    packet = f"{raw}#{crc8(raw)}"
     return packet.encode()
 
 def handle_client(conn, addr):
     print(f"[+] Yeni bağlantı: {addr}")
     try:
         while True:
-            req = gps_request()
-            conn.sendall(req)
-            print(f"[➡️] D1 komutu gönderildi:\n{req.decode(errors='ignore')}")
+            # 1. D0 komutunu gönder
+            packet = create_d0_packet()
+            conn.sendall(packet)
+            print(f"[➡️] D0 komutu gönderildi:\n{packet.decode()}")
 
-            timeout = time.time() + 20  # 20 saniye içinde cevap bekle
-            received_location = False
-
+            # 2. Cevap bekle
+            timeout = time.time() + 30  # 30 saniyelik pencere
             while time.time() < timeout:
                 try:
                     data = conn.recv(1024)
@@ -37,24 +37,22 @@ def handle_client(conn, addr):
                     msg = data.decode(errors='ignore').strip()
                     print(f"[📩] Gelen veri: {msg}")
 
-                    if ",L1," in msg:
-                        print("📍 Konum verisi alındı, 10 dakika sonra tekrar istenecek.\n")
-                        received_location = True
+                    if msg.startswith("*CMDR") and ",D0," in msg:
+                        print("📍 ✅ GPS konum verisi geldi.")
                         break
-                    elif ",Q0," in msg:
-                        print("⚠️ Cihaz ağa yeni bağlandı, komut tekrar gönderilecek.")
-                        time.sleep(2)
-                        conn.sendall(req)  # komutu tekrar gönder
+                    elif ",L1," in msg:
+                        print("📍 🚫 Sadece LBS konumu geldi. GPS henüz hazır değil.")
+                        break
                 except Exception as e:
                     print(f"[!] Veri okuma hatası: {e}")
                     break
 
-            if not received_location:
-                print("⚠️ Konum verisi alınamadı, 10 dakika sonra tekrar denenecek.\n")
+            # 3. 10 dakika bekle
+            print("🕓 10 dakika bekleniyor...\n")
+            time.sleep(600)
 
-            time.sleep(600)  # 10 dakika bekle
     except Exception as e:
-        print(f"[!] Hata: {e}")
+        print(f"[!] Bağlantı hatası: {e}")
     finally:
         conn.close()
         print(f"[-] Bağlantı kapandı: {addr}")
