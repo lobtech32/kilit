@@ -3,70 +3,67 @@ import datetime
 import threading
 import time
 import zlib
-import logging
-
-# Log ayarları
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
 
 HOST = '0.0.0.0'
 PORT = 40341
 IMEI = '862205059210023'
-GPS_TIMEOUT = 180  # 3 dakika (GPS fix süresi)
 
 def crc16(data):
-    crc = zlib.crc32(data.encode()) & 0xFFFF
-    return f"{crc:04X}"
+    crc = zlib.crc32(data.encode()) & 0xFF
+    return f"{crc:02X}"
 
-def build_command(command_type):
-    now = datetime.datetime.now(datetime.timezone.utc).strftime('%d%m%y%H%M%S')
-    raw = f"*CMDS,OM,{IMEI},{now},{command_type}"
-    return f"{raw}#{crc16(raw)}".encode()
+def gps_request():
+    now = datetime.datetime.utcnow().strftime('%d%m%y%H%M%S')
+    raw = f"*CMDS,OM,{IMEI},{now},D1,1"  # D0 yerine D1 komutu
+    packet = f"{raw}#{crc16(raw)}"
+    return packet.encode()
 
 def handle_client(conn, addr):
-    logging.info(f"[+] Yeni bağlantı: {addr}")
+    print(f"[+] Yeni bağlantı: {addr}")
     try:
-        # İlk GPS isteği
-        conn.sendall(build_command("D0"))
-        logging.info("[➡️] D0 komutu gönderildi (ilk istek)")
-
         while True:
-            data = conn.recv(1024)
-            if not data:
-                break
+            req = gps_request()
+            conn.sendall(req)
+            print(f"[➡️] D1 komutu gönderildi:\n{req.decode(errors='ignore')}")
 
-            msg = data.decode(errors='ignore').strip()
-            logging.info(f"[📩] Gelen veri: {msg}")
+            timeout = time.time() + 20  # 20 saniye içinde cevap bekle
+            received_location = False
 
-            if "*CMDR" in msg and IMEI in msg:
-                if ",D0," in msg:
-                    if "A,," not in msg:  # Geçerli GPS verisi kontrolü
-                        logging.warning("GPS verisi geçersiz veya yok!")
-                        time.sleep(GPS_TIMEOUT)  # Yeni deneme öncesi bekle
-                    else:
-                        logging.info("✅ Geçerli GPS verisi alındı!")
-                        time.sleep(600)  # 10 dakika bekle
+            while time.time() < timeout:
+                try:
+                    data = conn.recv(1024)
+                    if not data:
+                        break
+                    msg = data.decode(errors='ignore').strip()
+                    print(f"[📩] Gelen veri: {msg}")
 
-                elif ",L1," in msg:
-                    logging.info("🔒 Kilit kapatıldı, GPS isteği gönderiliyor...")
-                    time.sleep(2)  # Kısa bekleme
-                    conn.sendall(build_command("D0"))
+                    if ",L1," in msg:
+                        print("📍 Konum verisi alındı, 10 dakika sonra tekrar istenecek.\n")
+                        received_location = True
+                        break
+                    elif ",Q0," in msg:
+                        print("⚠️ Cihaz ağa yeni bağlandı, komut tekrar gönderilecek.")
+                        time.sleep(2)
+                        conn.sendall(req)  # komutu tekrar gönder
+                except Exception as e:
+                    print(f"[!] Veri okuma hatası: {e}")
+                    break
 
+            if not received_location:
+                print("⚠️ Konum verisi alınamadı, 10 dakika sonra tekrar denenecek.\n")
+
+            time.sleep(600)  # 10 dakika bekle
     except Exception as e:
-        logging.error(f"[!] Hata: {e}")
+        print(f"[!] Hata: {e}")
     finally:
         conn.close()
-        logging.info(f"[-] Bağlantı kapandı: {addr}")
+        print(f"[-] Bağlantı kapandı: {addr}")
 
 def start_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
-        logging.info(f"[🚀] Sunucu çalışıyor: {HOST}:{PORT}")
+        print(f"[🚀] Sunucu çalışıyor: {HOST}:{PORT}")
         while True:
             conn, addr = s.accept()
             threading.Thread(target=handle_client, args=(conn, addr)).start()
