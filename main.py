@@ -1,22 +1,14 @@
-import datetime
+import socket
 
-# 🔹 CRC hesaplayan fonksiyon
-def calculate_crc(message_body: str) -> str:
-    crc = 0
-    for char in message_body:
-        crc ^= ord(char)
-    return f"{crc:02X}"
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.bind(('0.0.0.0', 40341))
+server.listen(5)
+print("Sunucu dinlemede...")
 
-# 🔹 Komutu oluşturan fonksiyon
-def build_oc30_command(imei: str, timestamp: str, command_body: str) -> str:
-    base = f"CMDS,OM,{imei},{timestamp},{command_body}"
-    crc = calculate_crc(base)
-    return f"*{base}#{crc}"
-
-# 🔹 GPS modülünü açan fonksiyon
-def send_gps_enable_command(socket, imei):
-    now = datetime.datetime.utcnow()
-    timestamp = now.strftime("%y%m%d%H%M%S")  # YYMMDDHHMMSS
-    komut = build_oc30_command(imei, timestamp, "D0,1")
-    print(f"[➡️] GPS modülü açılıyor: {komut}")
-    socket.sendall(komut.encode())
+while True:
+    client_socket, addr = server.accept()
+    print(f"Yeni bağlantı: {addr}")
+    data = client_socket.recv(1024).decode()
+    print(f"Gelen veri: {data}")
+    # Burada istediğin işlemleri yap
+    # Örnek: client_socket.sendall(b"Merhaba")
